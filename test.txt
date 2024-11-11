@@ -1,0 +1,1 @@
+Acesta este continutul fisierului test.txt
