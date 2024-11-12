@@ -10,6 +10,7 @@ typedef struct{
     pthread_t *threads_availabe;
     size_t number_of_threads;
     pthread_mutex_t mutex_locker;
+    pthread_cond_t not_empty_queue;
 }threadpool;
 
 static threadpool* server_threadpool;
