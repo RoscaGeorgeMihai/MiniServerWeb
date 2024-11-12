@@ -1,73 +1,22 @@
 #define _GNU_SOURCE
-#include<sys/socket.h>
-#include<sys/types.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <arpa/inet.h> // pentru struct sockaddr_in
-#include<string.h>
+#include <string.h>
 #include <fcntl.h>
-#include<sys/sendfile.h>
-#include<unistd.h>
-#include<netinet/in.h>
+#include <sys/sendfile.h>
+#include <unistd.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <pthread.h>
 #include <stdio.h>
 #include "threadpool.h"
+#include "clientshandler.h"
 
 #define PORT 8080
 #define NO_THREADS 10
-#define BUFFER_SIZE 1024
 
-void* handle_client(void* client_fd)
-{
-    printf("Handling client %d on thread %d\n",*(int*)client_fd,gettid());
-            // Primeste o cerere HTTP 
-        char buffer[BUFFER_SIZE] = {0};
-        ssize_t bytes_received = recv(client_fd, buffer, BUFFER_SIZE, 0);//primeste data de la client si le stocheaza in buffer
-        if (bytes_received < 0) {
-            perror("Receive failed");
-            close(client_fd);
-        }
-if (strncmp(buffer, "GET", 3) == 0) {
-            // Extrage calea fisierului
-            char *file_path = buffer + 5;
-            char *end_of_path = strchr(file_path, ' ');
-            if (end_of_path) {
-                *end_of_path = '\0';  // adauga terminatorul null la finalul caii
-            }
-
-            // Deschide fisierul
-            int file_fd = open(file_path, O_RDONLY);
-            if (file_fd < 0) {
-                // 404 - fisierul nu e gasit
-                const char *not_found = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n"
-                                        "<html><body><h1>404 Not Found</h1></body></html>";
-                send(client_fd, not_found, strlen(not_found), 0);
-            } else {
-                // dimensiune fisier
-                off_t file_size = lseek(file_fd, 0, SEEK_END);
-                lseek(file_fd, 0, SEEK_SET);
-
-                //  200 OK  - fisier gasit
-                char header[512];
-                snprintf(header, sizeof(header), "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %ld\r\n\r\n", file_size);
-                send(client_fd, header, strlen(header), 0);
-
-                // trimite continutul fisierului
-                sendfile(client_fd, file_fd, 0, file_size);
-                close(file_fd);
-            }
-        } else {
-            // 400 - nu e cerere de tip GET
-            const char *bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n"
-                                      "<html><body><h1>400 Bad Request</h1></body></html>";
-            send(client_fd, bad_request, strlen(bad_request), 0);
-        }
-    close(*(int*)client_fd);
-
-    printf("Handling completed\n");
-    return NULL;
-}
-
-void main(){
+int main(){
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("Deschidere server\n");
 
@@ -120,7 +69,9 @@ void main(){
 
         pthread_mutex_lock(&(server_threadpool->mutex_locker)); //<-sectiune critica => trebuie blocata folosind mutex-ul pentru a nu efectua 
         push(server_threadpool->clients,client_sock); //doua thread-uri operatiuni simultane pe acceasi coada si a o lasa intr-o stare inconsecventa
+        pthread_cond_signal(&server_threadpool->not_empty_queue);
         pthread_mutex_unlock(&(server_threadpool->mutex_locker)); 
+
     }
 
     close(server_fd);   
