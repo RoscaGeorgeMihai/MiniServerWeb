@@ -32,6 +32,30 @@ int handle_get_request(char* file_path, int* client_fd){
     }
 }
 
+int handle_post_request(char* body,int*client_fd){
+    printf("Received POST data: %s\n",body);
+    int file_fd = open("received_data.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (file_fd < 0) {
+        perror("Error opening file for POST data");
+        const char *server_error = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n"
+                                   "<html><body><h1>500 Internal Server Error</h1></body></html>";
+        send(*(int*)client_fd, server_error, strlen(server_error), 0);
+        return -1;
+    }
+
+    // Scrierea datelor in fisier
+    write(file_fd, body, strlen(body));
+    close(file_fd);
+
+    // Raspuns de succes
+    const char *response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"
+                           "<html><body><h1>Data Received Successfully</h1></body></html>";
+    send(*(int*)client_fd, response, strlen(response), 0);
+
+    return 0;
+
+}
+
 void* handle_client(void* client_fd)
 {
     printf("Handling client %d on thread %d\n",*(int*)client_fd,gettid());
@@ -53,7 +77,18 @@ void* handle_client(void* client_fd)
             // Deschide fisierul
 
             handle_get_request(file_path,(int*)client_fd);
-    } else {
+    }else if(strncmp(buffer, "POST", 4) == 0){
+        char *body_start = strstr(buffer, "\r\n\r\n");  // cauta inceputul corpului
+        if (body_start) {
+            body_start += 4;  // sarim de "\r\n\r\n"
+            handle_post_request(body_start, (int*)client_fd);
+        } else {
+            const char *bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n"
+                                      "<html><body><h1>400 Bad Request</h1></body></html>";
+            send(*(int*)client_fd, bad_request, strlen(bad_request), 0);
+        }
+    }
+     else {
         // 400 - nu e cerere de tip GET
         const char *bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n"
                                   "<html><body><h1>400 Bad Request</h1></body></html>";
