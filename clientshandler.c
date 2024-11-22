@@ -9,51 +9,89 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-int handle_get_request(char* file_path, int* client_fd){
+int handle_get_request(char* file_path, int* client_fd) {
     int file_fd = open(file_path, O_RDONLY);
     if (file_fd < 0) {
-        // 404 - fisierul nu e gasit
+        // 404 - fișierul nu a fost găsit
         const char *not_found = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n"
                                 "<html><body><h1>404 Not Found</h1></body></html>";
-        send(*(int*)client_fd, not_found, strlen(not_found), 0);
+        if (send(*(int*)client_fd, not_found, strlen(not_found), 0) < 0) {
+            perror("Failed to send 404 response");
+            close(*(int*)client_fd);
+            return -1;
+        }
     } else {
-        // dimensiune fisier
+        // dimensiune fișier
         off_t file_size = lseek(file_fd, 0, SEEK_END);
+        if (file_size < 0) {
+            perror("Failed to seek file");
+            close(file_fd);
+            return -1;
+        }
         lseek(file_fd, 0, SEEK_SET);
 
-        //  200 OK  - fisier gasit
+        // 200 OK - fișier găsit
         char header[512];
-        snprintf(header, sizeof(header), "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %ld\r\n\r\n", file_size);
-        send(*(int*)client_fd, header, strlen(header), 0);
+        int header_len = snprintf(header, sizeof(header), "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %ld\r\n\r\n", file_size);
+        if (header_len < 0) {
+            perror("Failed to format HTTP header");
+            close(file_fd);
+            return -1;
+        }
 
-        // trimite continutul fisierului
-        sendfile(*(int*)client_fd,file_fd,0,file_size);
+        if (send(*(int*)client_fd, header, header_len, 0) < 0) {
+            perror("Failed to send HTTP header");
+            close(file_fd);
+            return -1;
+        }
+
+        // trimite conținutul fișierului
+        if (sendfile(*(int*)client_fd, file_fd, 0, file_size) < 0) {
+            perror("Failed to send file");
+            close(file_fd);
+            return -1;
+        }
     }
-}
 
-int handle_post_request(char* body,int*client_fd){
-    printf("Received POST data: %s\n",body);
+    close(file_fd);
+    return 0;
+}
+int handle_post_request(char* body, int* client_fd) {
+    printf("Received POST data: %s\n", body);
     int file_fd = open("received_data.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (file_fd < 0) {
         perror("Error opening file for POST data");
         const char *server_error = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n"
                                    "<html><body><h1>500 Internal Server Error</h1></body></html>";
-        send(*(int*)client_fd, server_error, strlen(server_error), 0);
+        if (send(*(int*)client_fd, server_error, strlen(server_error), 0) < 0) {
+            perror("Failed to send 500 response");
+        }
         return -1;
     }
 
-    // Scrierea datelor in fisier
-    write(file_fd, body, strlen(body));
+    // Scrierea datelor în fișier
+    if (write(file_fd, body, strlen(body)) < 0) {
+        perror("Error writing POST data to file");
+        const char *server_error = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n"
+                                   "<html><body><h1>500 Internal Server Error</h1></body></html>";
+        if (send(*(int*)client_fd, server_error, strlen(server_error), 0) < 0) {
+            perror("Failed to send 500 response");
+        }
+        close(file_fd);
+        return -1;
+    }
+
     close(file_fd);
 
-    // Raspuns de succes
+    // Răspuns de succes
     const char *response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"
                            "<html><body><h1>Data Received Successfully</h1></body></html>";
-    send(*(int*)client_fd, response, strlen(response), 0);
+    if (send(*(int*)client_fd, response, strlen(response), 0) < 0) {
+        perror("Failed to send success response");
+        return -1;
+    }
 
     return 0;
-
 }
 
 void* handle_client(void* client_fd)
