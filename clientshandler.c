@@ -1,139 +1,286 @@
-#define _GNU_SOURCE
-#include "clientshandler.h"
-#include <sys/types.h>
-#include <sys/sendfile.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-int handle_get_request(char* file_path, int* client_fd) {
-    int file_fd = open(file_path, O_RDONLY);
-    if (file_fd < 0) {
-        // 404 - fișierul nu a fost găsit
-        const char *not_found = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n"
-                                "<html><body><h1>404 Not Found</h1></body></html>";
-        if (send(*(int*)client_fd, not_found, strlen(not_found), 0) < 0) {
-            perror("Failed to send 404 response");
-            close(*(int*)client_fd);
-            return -1;
-        }
-    } else {
-        // dimensiune fișier
-        off_t file_size = lseek(file_fd, 0, SEEK_END);
-        if (file_size < 0) {
-            perror("Failed to seek file");
-            close(file_fd);
-            return -1;
-        }
-        lseek(file_fd, 0, SEEK_SET);
+#include"clientshandler.h"
 
-        // 200 OK - fișier găsit
-        char header[512];
-        int header_len = snprintf(header, sizeof(header), "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %ld\r\n\r\n", file_size);
-        if (header_len < 0) {
-            perror("Failed to format HTTP header");
-            close(file_fd);
-            return -1;
-        }
+#define HTML "text/html"
+#define PLAIN "text/plain"
+#define JPEG "image/jpeg"
+#define PNG "image/png"
+#define PHP "text/html"
+#define JAVA "text/html"
+#define OTHER "application/octet-stream"
+#define ERROR_HEADER "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n"
+#define ERROR_FILE "error.html"
 
-        if (send(*(int*)client_fd, header, header_len, 0) < 0) {
-            perror("Failed to send HTTP header");
-            close(file_fd);
-            return -1;
-        }
 
-        // trimite conținutul fișierului
-        if (sendfile(*(int*)client_fd, file_fd, 0, file_size) < 0) {
-            perror("Failed to send file");
-            close(file_fd);
-            return -1;
-        }
-    }
-
-    close(file_fd);
-    return 0;
-}
-int handle_post_request(char* body, int* client_fd) {
-    printf("Received POST data: %s\n", body);
-    int file_fd = open("received_data.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (file_fd < 0) {
-        perror("Error opening file for POST data");
-        const char *server_error = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n"
-                                   "<html><body><h1>500 Internal Server Error</h1></body></html>";
-        if (send(*(int*)client_fd, server_error, strlen(server_error), 0) < 0) {
-            perror("Failed to send 500 response");
-        }
-        return -1;
-    }
-
-    // Scrierea datelor în fișier
-    if (write(file_fd, body, strlen(body)) < 0) {
-        perror("Error writing POST data to file");
-        const char *server_error = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n"
-                                   "<html><body><h1>500 Internal Server Error</h1></body></html>";
-        if (send(*(int*)client_fd, server_error, strlen(server_error), 0) < 0) {
-            perror("Failed to send 500 response");
-        }
-        close(file_fd);
-        return -1;
-    }
-
-    close(file_fd);
-
-    // Răspuns de succes
-    const char *response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"
-                           "<html><body><h1>Data Received Successfully</h1></body></html>";
-    if (send(*(int*)client_fd, response, strlen(response), 0) < 0) {
-        perror("Failed to send success response");
-        return -1;
-    }
-
-    return 0;
-}
-
-void* handle_client(void* client_fd)
+const char *get_file_extension(const char *filename)
 {
-    printf("Handling client %d on thread %d\n",*(int*)client_fd,gettid());
-            // Primeste o cerere HTTP 
-        char buffer[BUFFER_SIZE] = {0};
-        ssize_t bytes_received = recv(*(int*)client_fd, buffer, BUFFER_SIZE, 0);//primeste data de la client si le stocheaza in buffer
-        if (bytes_received < 0) {
-            perror("Receive failed");
-            close(*(int*)client_fd);
+    const char *dot = strrchr(filename, '.');
+    if (!dot || dot == filename)
+    {
+        return "";
+    }
+    return dot + 1;
+} 
+
+const char *get_mime_type(const char *file_ext)
+{
+    if (strcasecmp(file_ext, "html") == 0 || strcasecmp(file_ext, "htm") == 0)
+    {
+        return HTML;
+    }
+    else if (strcasecmp(file_ext, "txt") == 0)
+    {
+        return PLAIN;
+    }
+    else if (strcasecmp(file_ext, "jpg") == 0 || strcasecmp(file_ext, "jpeg") == 0)
+    {
+        return JPEG;
+    }
+    else if (strcasecmp(file_ext, "png") == 0)
+    {
+        return PNG;
+    }
+    else if (strcasecmp(file_ext, "php") == 0)
+    {
+        return PHP;
+    }
+    else if (strcasecmp(file_ext, "js") == 0)
+    {
+        return JAVA;
+    }
+    else
+    {
+        return OTHER;
+    }
+} 
+
+char *url_decode(const char *src)
+{
+    size_t src_len = strlen(src);
+    char *decoded = malloc(src_len + 1);
+    size_t decoded_len = 0;
+    for (size_t i = 0; i < src_len; i++)
+    {
+        if (src[i] == '%' && i + 2 < src_len)
+        {
+            int hex_val;
+            sscanf(src + i + 1, "%2x", &hex_val);
+            decoded[decoded_len++] = hex_val;
+            i += 2;
         }
-    if (strncmp(buffer, "GET", 3) == 0) {
-            // Extrage calea fisierului
-            char *file_path = buffer + 5;
-            char *end_of_path = strchr(file_path, ' ');
-            if (end_of_path) {
-                *end_of_path = '\0';  // adauga terminatorul null la finalul caii
+        else
+        {
+            decoded[decoded_len++] = src[i];
+        }
+    }
+    decoded[decoded_len] = '\0';
+    return decoded;
+}
+
+void build_http_ok(const char *file_name, const char *file_ext, char *response, size_t *response_len)
+{
+    char *header = (char *)malloc(BUFFER_SIZE * sizeof(char));
+    const char *mime_type = get_mime_type(file_ext);
+
+    snprintf(header, BUFFER_SIZE, "HTTP/1.1 200 OK\r\n"
+                                  "Content-Type: %s\r\n"
+                                  "\r\n",
+             mime_type);
+
+    int file_fd = open(file_name, O_RDONLY);
+    if (file_fd == -1)
+    {
+        perror("Open failed!");
+        exit(EXIT_FAILURE);
+    }
+    struct stat file_stat;
+    if (fstat(file_fd, &file_stat))
+    {
+        perror("Bad call!");
+        exit(EXIT_FAILURE);
+    }
+    off_t file_size = file_stat.st_size;
+
+    *response_len = 0;
+    memcpy(response, header, strlen(header));
+    *response_len += strlen(header);
+
+    ssize_t bytes_read;
+    while ((bytes_read = read(file_fd, response + *response_len, BUFFER_SIZE - *response_len)) > 0)
+    {
+        *response_len += bytes_read;
+    }
+    free(header);
+    close(file_fd);
+}
+
+void build_http_error(const char *file_name, char *response, size_t *response_len)
+{
+    char *header_err = (char *)malloc(BUFFER_SIZE * sizeof(char));
+
+    snprintf(header_err, BUFFER_SIZE, ERROR_HEADER);
+
+    int file_fd_err = open(ERROR_FILE, O_RDONLY);
+    if (file_fd_err == -1)
+    {
+        perror("Open failed!");
+        exit(EXIT_FAILURE);
+    }
+
+    struct stat file_err_stat;
+    if (fstat(file_fd_err, &file_err_stat))
+    {
+        perror("Bad call!");
+        exit(EXIT_FAILURE);
+    }
+    off_t file_err_size = file_err_stat.st_size;
+
+    *response_len = 0;
+    memcpy(response, header_err, strlen(header_err));
+    *response_len += strlen(header_err);
+
+    ssize_t bytes_err_read;
+    while ((bytes_err_read = read(file_fd_err, response + *response_len, BUFFER_SIZE - *response_len)) > 0)
+    {
+        *response_len += bytes_err_read;
+    }
+
+    free(header_err);
+    close(file_fd_err);
+}
+
+void build_http_response(const char *file_name, const char *file_ext,
+                         char *response, size_t *response_len)
+{
+    int file_fd = open(file_name, O_RDONLY);
+    if (file_fd == -1)
+    {
+        build_http_error(file_name, response, response_len);
+        return;
+    }
+
+    if (strcmp(file_ext, "php") == 0)
+    {
+        build_http_ok("test.php", file_ext, response, response_len);
+        return;
+    }
+    if (strcmp(file_ext, "js") == 0)
+    {
+        build_http_ok("testjava.txt", "txt", response, response_len);
+        return;
+    }
+    build_http_ok(file_name, file_ext, response, response_len);
+}
+
+void *handle_client(void *arg)
+{
+
+    int client_fd = *(int *)arg;  // Convertim pointerul la int     
+    char *buffer = (char *)malloc(BUFFER_SIZE * sizeof(char));
+
+    ssize_t bytes_received = recv(client_fd, buffer, BUFFER_SIZE, 0);
+    if (bytes_received > 0)
+    {
+
+        regex_t regex_get, regex_post, regex_put;
+        regcomp(&regex_get, "^GET /([^ ]*) HTTP/1", REG_EXTENDED);
+        regcomp(&regex_post, "^POST /([^ ]*) HTTP/1", REG_EXTENDED);
+        regcomp(&regex_put, "^PUT /([^ ]*) HTTP/1", REG_EXTENDED);
+
+        regmatch_t get_matches[2],
+            post_matches[2],
+            put_matches[2];
+
+        if (regexec(&regex_get, buffer, 2, get_matches, 0) == 0)
+        {
+            buffer[get_matches[1].rm_eo] = '\0';
+
+            const char *url_encoded_file_name = buffer + get_matches[1].rm_so;
+
+            char *file_name = url_decode(url_encoded_file_name);
+            
+            char file_ext[32];
+            strcpy(file_ext, get_file_extension(file_name));
+
+            if (strcmp(file_ext, "php") == 0)
+            {
+                printf("\nPHP FILE! Interpreting it!...\n");
+                interpretPHP(file_name);
             }
 
-            // Deschide fisierul
+            printf("\nExtensie: %s", file_ext);
 
-            handle_get_request(file_path,(int*)client_fd);
-    }else if(strncmp(buffer, "POST", 4) == 0){
-        char *body_start = strstr(buffer, "\r\n\r\n");  // cauta inceputul corpului
-        if (body_start) {
-            body_start += 4;  // sarim de "\r\n\r\n"
-            handle_post_request(body_start, (int*)client_fd);
-        } else {
-            const char *bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n"
-                                      "<html><body><h1>400 Bad Request</h1></body></html>";
-            send(*(int*)client_fd, bad_request, strlen(bad_request), 0);
+            if (strcmp(file_ext, "js") == 0)
+            {
+                printf("\nJAVASCRIPT FILE! Interpreting it!...\n");
+                interpretJAVA(file_name);
+            }
+
+            char *response = (char *)malloc(BUFFER_SIZE * 2 * sizeof(char));
+
+            size_t response_len;
+            build_http_response(file_name, file_ext, response, &response_len);
+
+            send(client_fd, response, response_len, 0);
+
+            free(response);
+            free(file_name);
         }
-    }
-     else {
-        // 400 - nu e cerere de tip GET
-        const char *bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\n\r\n"
-                                  "<html><body><h1>400 Bad Request</h1></body></html>";
-        send(*(int*)client_fd, bad_request, strlen(bad_request), 0);
-    }
-    close(*(int*)client_fd);
 
-    printf("Handling completed\n");
+        else if (regexec(&regex_post, buffer, 2, post_matches, 0) == 0)
+        {
+            process_post_request(buffer);
+        }
+        else if (regexec(&regex_put, buffer, 2, put_matches, 0) == 0)
+        {
+            process_put_request(buffer);
+        }
+
+        regfree(&regex_get);
+        regfree(&regex_post);
+        regfree(&regex_put);
+    }
+
+    close(client_fd);
+    pthread_exit(NULL);
+    free(buffer);
+    free(arg); 
     return NULL;
+}
+
+void process_post_request(const char *buffer)
+{
+    const char *post_data_start = strstr(buffer, "\r\n\r\n");
+    if (post_data_start != NULL)
+    {
+        post_data_start += 4;
+
+        printf("Data POST primită:\n%s\n", post_data_start);
+    }
+}
+
+void process_put_request(const char *buffer)
+{
+    const char *put_data_start = strstr(buffer, "\r\n\r\n");
+    if (put_data_start != NULL)
+    {
+        put_data_start += 4;
+
+        printf("Data PUT primită:\n%s\n", put_data_start);
+    }
+}
+
+void interpretPHP(const char *file_name)
+{
+    char command[256];
+
+    snprintf(command, 256, "php %s > testphp.txt", file_name);
+    system(command);
+}
+
+void interpretJAVA(const char *file_name)
+{
+    char command[256];
+    printf("node %s > testjava.txt",file_name);
+    snprintf(command, 256, "node %s > testjava.txt", file_name);
+    system(command);
 }

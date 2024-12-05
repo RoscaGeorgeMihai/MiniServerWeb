@@ -1,1 +1,1 @@
-name=sdfg&email=dfb%40mail.com&message=gfsbgf
+{"name":"John", "age":30}
