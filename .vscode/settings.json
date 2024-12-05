@@ -5,6 +5,8 @@
         "in.h": "c",
         "queue.h": "c",
         "threadpool.h": "c",
-        "pthread.h": "c"
+        "pthread.h": "c",
+        "start_stop.h": "c",
+        "inet.h": "c"
     }
 }

@@ -11,6 +11,9 @@ typedef struct{
     size_t number_of_threads;
     pthread_mutex_t mutex_locker;
     pthread_cond_t not_empty_queue;
+    bool stop;
+    bool is_running;
+    pthread_t thread;
 }threadpool;
 
 static threadpool* server_threadpool;
@@ -23,5 +26,7 @@ void* thread_function(void* );
 
 //functia care gestioneaza clientii de pe socketsi
 void* handle_client(void* client_socket);
+
+void destroy_threadpool(threadpool*pool);
 
 #endif
