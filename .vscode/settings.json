@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "socket.h": "c",
+        "stdbool.h": "c",
+        "in.h": "c",
+        "queue.h": "c",
+        "threadpool.h": "c",
+        "pthread.h": "c",
+        "start_stop.h": "c",
+        "inet.h": "c"
+    }
+}
