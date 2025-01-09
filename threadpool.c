@@ -1,6 +1,7 @@
 #include "threadpool.h"
 #include <stdbool.h>
 #include <stdlib.h>
+#include<stdio.h>
 
 
 void* thread_function(void* arg) {
@@ -21,7 +22,7 @@ void* thread_function(void* arg) {
         if (client_socket == 0) continue;
 
         if (handle_client(&client_socket) < 0) {
-            perror("Error handling client request");
+            printf("Error handling client request");
         }
         
         pthread_mutex_unlock(&(server_threadpool->mutex_locker));

@@ -117,20 +117,21 @@ void build_http_error(const char *file_name, char *response, size_t *response_le
 {
     char *header_err = (char *)malloc(BUFFER_SIZE * sizeof(char));
 
-    snprintf(header_err, BUFFER_SIZE, ERROR_HEADER);
+    snprintf(header_err, strlen(ERROR_HEADER)+1, ERROR_HEADER);
 
     int file_fd_err = open(ERROR_FILE, O_RDONLY);
     if (file_fd_err == -1)
     {
+
         perror("Open failed!");
-        exit(EXIT_FAILURE);
+        
     }
 
     struct stat file_err_stat;
     if (fstat(file_fd_err, &file_err_stat))
     {
         perror("Bad call!");
-        exit(EXIT_FAILURE);
+        
     }
     off_t file_err_size = file_err_stat.st_size;
 
@@ -143,19 +144,29 @@ void build_http_error(const char *file_name, char *response, size_t *response_le
     {
         *response_len += bytes_err_read;
     }
-
+    snprintf(response, BUFFER_SIZE,  "HTTP/1.1 404 Not Found\r\n"
+                                    "Content-Type: text/html\r\n"
+                                    "\r\n"
+                                    "<html>"
+                                    "<head><title>404 Not Found</title></head>"
+                                    "<body><h1>404 Not Found</h1></body>"
+                                    "</html>");
+    *response_len = strlen(response);
     free(header_err);
     close(file_fd_err);
 }
 
 void build_http_response(const char *file_name, const char *file_ext, char *response, size_t *response_len)
 {
+    
+
     int file_fd = open(file_name, O_RDONLY);
     if (file_fd == -1)
     {
         build_http_error(file_name, response, response_len);
         return;
     }
+
    if (strcasecmp(file_ext, "zip") == 0)
     {
         char extracted_data[BUFFER_SIZE];
@@ -186,16 +197,16 @@ void build_http_response(const char *file_name, const char *file_ext, char *resp
 
         return;
     }
-    if (strcmp(file_ext, "php") == 0)
+    else if (strcmp(file_ext, "php") == 0)
     {
         build_http_ok("script.php", file_ext, response, response_len);
         return;
     }
-    if (strcmp(file_ext, "js") == 0)
+    else if (strcmp(file_ext, "js") == 0)
     {
         build_http_ok("testjava.txt", "txt", response, response_len);
         return;
-    }
+    } 
     build_http_ok(file_name, file_ext, response, response_len);
 }
 
