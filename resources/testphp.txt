@@ -1,0 +1,1 @@
+<h1>Bine ați venit pe pagina PHP!</h1><p>Hello, Andreea and George!</p><p>Data curentă este: 2024-12-05 09:23:03</p>

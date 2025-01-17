@@ -117,21 +117,18 @@ void build_http_error(const char *file_name, char *response, size_t *response_le
 {
     char *header_err = (char *)malloc(BUFFER_SIZE * sizeof(char));
 
-    snprintf(header_err, BUFFER_SIZE, ERROR_HEADER);
+    snprintf(header_err, strlen(ERROR_HEADER)+1, ERROR_HEADER);
 
     int file_fd_err = open(ERROR_FILE, O_RDONLY);
     if (file_fd_err == -1)
     {
+
         perror("Open failed!");
-        exit(EXIT_FAILURE);
+        
     }
 
     struct stat file_err_stat;
-    if (fstat(file_fd_err, &file_err_stat))
-    {
-        perror("Bad call!");
-        exit(EXIT_FAILURE);
-    }
+    
     off_t file_err_size = file_err_stat.st_size;
 
     *response_len = 0;
@@ -143,14 +140,22 @@ void build_http_error(const char *file_name, char *response, size_t *response_le
     {
         *response_len += bytes_err_read;
     }
-
+    snprintf(response, BUFFER_SIZE,  "HTTP/1.1 404 Not Found\r\n"
+                                    "Content-Type: text/html\r\n"
+                                    "\r\n"
+                                    "<html>"
+                                    "<head><title>404 Not Found</title></head>"
+                                    "<body><h1>404 Not Found</h1></body>"
+                                    "</html>");
+    *response_len = strlen(response);
     free(header_err);
     close(file_fd_err);
 }
 
-void build_http_response(const char *file_name, const char *file_ext,
-                         char *response, size_t *response_len)
+void build_http_response(const char *file_name, const char *file_ext, char *response, size_t *response_len)
 {
+    
+
     int file_fd = open(file_name, O_RDONLY);
     if (file_fd == -1)
     {
@@ -158,16 +163,46 @@ void build_http_response(const char *file_name, const char *file_ext,
         return;
     }
 
-    if (strcmp(file_ext, "php") == 0)
+   if (strcasecmp(file_ext, "zip") == 0)
     {
-        build_http_ok("test.php", file_ext, response, response_len);
+        char extracted_data[BUFFER_SIZE];
+        size_t extracted_len;
+        char mime_type[64];
+
+        extract_file_from_zip(file_name, extracted_data, &extracted_len, mime_type);
+
+        if (extracted_len > 0)
+        {
+            snprintf(response, BUFFER_SIZE, "HTTP/1.1 200 OK\r\n"
+                                            "Content-Type: %s\r\n"
+                                            "Content-Length: %zu\r\n"
+                                            "\r\n",
+                     mime_type, extracted_len);
+            memcpy(response + strlen(response), extracted_data, extracted_len);
+            *response_len = strlen(response) + extracted_len;
+        }
+        else
+        {
+            snprintf(response, BUFFER_SIZE, "HTTP/1.1 404 Not Found\r\n"
+                                            "Content-Type: text/plain\r\n"
+                                            "\r\n"
+                                            "File not found in ZIP or ZIP is empty.\n");
+            *response_len = strlen(response);
+            printf("ERROR: No content found in ZIP.\n");
+        }
+
         return;
     }
-    if (strcmp(file_ext, "js") == 0)
+    else if (strcmp(file_ext, "php") == 0)
+    {
+        build_http_ok("script.php", file_ext, response, response_len);
+        return;
+    }
+    else if (strcmp(file_ext, "js") == 0)
     {
         build_http_ok("testjava.txt", "txt", response, response_len);
         return;
-    }
+    } 
     build_http_ok(file_name, file_ext, response, response_len);
 }
 
@@ -228,11 +263,11 @@ void *handle_client(void *arg)
 
         else if (regexec(&regex_post, buffer, 2, post_matches, 0) == 0)
         {
-            process_post_request(buffer);
+            process_post_request(buffer, client_fd);
         }
         else if (regexec(&regex_put, buffer, 2, put_matches, 0) == 0)
         {
-            process_put_request(buffer);
+            process_put_request(buffer, client_fd);
         }
 
         regfree(&regex_get);
@@ -247,33 +282,48 @@ void *handle_client(void *arg)
     return NULL;
 }
 
-void process_post_request(const char *buffer)
+void process_post_request(const char *buffer, int client_fd)
 {
     const char *post_data_start = strstr(buffer, "\r\n\r\n");
     if (post_data_start != NULL)
     {
         post_data_start += 4;
-
         printf("Data POST primită:\n%s\n", post_data_start);
+        
+        const char *response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nPOST request received successfully.\n";
+        send(client_fd, response, strlen(response), 0);
+    }
+    else
+    {
+        const char *error_response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nInvalid POST request.\n";
+        send(client_fd, error_response, strlen(error_response), 0);
     }
 }
 
-void process_put_request(const char *buffer)
+void process_put_request(const char *buffer, int client_fd)
 {
     const char *put_data_start = strstr(buffer, "\r\n\r\n");
     if (put_data_start != NULL)
     {
         put_data_start += 4;
-
         printf("Data PUT primită:\n%s\n", put_data_start);
+        
+        const char *response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nPUT request received successfully.\n";
+        send(client_fd, response, strlen(response), 0);
+    }
+    else
+    {
+        const char *error_response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nInvalid PUT request.\n";
+        send(client_fd, error_response, strlen(error_response), 0);
     }
 }
+
 
 void interpretPHP(const char *file_name)
 {
     char command[256];
 
-    snprintf(command, 256, "php %s > testphp.txt", file_name);
+    snprintf(command, 256, "php %s > script.php", file_name);
     system(command);
 }
 
@@ -284,3 +334,81 @@ void interpretJAVA(const char *file_name)
     snprintf(command, 256, "node %s > testjava.txt", file_name);
     system(command);
 }
+
+void extract_file_from_zip(const char *zip_file, char *buffer, size_t *buffer_len, char *mime_type)
+{
+    printf("DEBUG: Trying to extract file from ZIP: %s\n", zip_file);
+
+    const char temp_dir[] = "./temp_zip_extract";
+    mkdir(temp_dir, 0755);
+
+    if (access(zip_file, F_OK) != 0)
+    {
+        perror("ERROR: ZIP file not found");
+        *buffer_len = 0;
+        return;
+    }
+
+    char command[256];
+    snprintf(command, sizeof(command), "unzip -o %s -d %s", zip_file, temp_dir);
+    int ret = system(command);
+    if (ret != 0)
+    {
+        perror("ERROR: Failed to extract ZIP file");
+        *buffer_len = 0;
+        return;
+    }
+
+    printf("DEBUG: Successfully extracted ZIP\n");
+
+    DIR *dir = opendir(temp_dir);
+    if (!dir)
+    {
+        perror("ERROR: Failed to open temporary directory");
+        *buffer_len = 0;
+        return;
+    }
+
+    struct dirent *entry;
+    struct stat file_stat;
+    char file_path[512] = {0};
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+        snprintf(file_path, sizeof(file_path), "%s/%s", temp_dir, entry->d_name);
+
+        if (stat(file_path, &file_stat) == 0 && S_ISREG(file_stat.st_mode))
+        {
+            printf("DEBUG: Found file in ZIP: %s\n", file_path);
+            break; 
+        }
+    }
+    closedir(dir);
+
+    if (strlen(file_path) == 0)
+    {
+        perror("ERROR: No file found in ZIP");
+        *buffer_len = 0;
+        return;
+    }
+
+    const char *file_ext = get_file_extension(file_path);
+    strcpy(mime_type, get_mime_type(file_ext));
+    printf("DEBUG: File MIME type: %s\n", mime_type);
+
+    FILE *file = fopen(file_path, "rb");
+    if (!file)
+    {
+        perror("ERROR: Failed to open extracted file");
+        *buffer_len = 0;
+        return;
+    }
+
+    *buffer_len = fread(buffer, 1, BUFFER_SIZE, file);
+    buffer[*buffer_len] = '\0';
+    fclose(file);
+
+    snprintf(command, sizeof(command), "rm -rf %s/*", temp_dir);
+    system(command);
+}
+

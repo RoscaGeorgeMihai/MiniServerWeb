@@ -13,7 +13,7 @@ typedef struct{
     pthread_cond_t not_empty_queue;
     bool stop;
     bool is_running;
-    pthread_t thread;
+    pthread_t thread; 
 }threadpool;
 
 static threadpool* server_threadpool;
