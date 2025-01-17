@@ -1,7 +1,7 @@
 #ifndef CLIENTS_HANDLERS_
 #define CLIENTS_HANDLERS_
 
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE 8192
 
 #include <stdio.h>     
 #include <stdlib.h>     
@@ -14,7 +14,11 @@
 #include <sys/sendfile.h>
 #include <regex.h>      
 #include <pthread.h>    
-#include <errno.h>      
+#include <errno.h>  
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 const char *get_file_extension(const char *filename);
 const char *get_mime_type(const char *file_ext);
@@ -24,9 +28,10 @@ void build_http_error(const char *file_name, char *response, size_t *response_le
 void build_http_response(const char *file_name, const char *file_ext,
                          char *response, size_t *response_len);
 void *handle_client(void *arg);
-void process_post_request(const char *buffer);
-void process_put_request(const char *buffer);
+void process_post_request(const char *buffer,int client_fd);
+void process_put_request(const char *buffer,int client_fd);
 void interpretPHP(const char *file_name);
 void interpretJAVA(const char *file_name);
+void extract_file_from_zip(const char *zip_file, char *buffer, size_t *buffer_len,char *mime_type);
 
 #endif

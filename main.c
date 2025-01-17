@@ -15,14 +15,16 @@
 #include"start_stop.h"
 
 int main() {
+    chdir("./resources");
+    load_password_status();
     while (1) {
-        int password_check = check_password();  // Cerem parola
+        int password_check = check_password(); 
 
         if (password_check == 1) {
-            start_server();  // Dacă parola este corectă, pornește serverul
+            start_server();  
         } else if (password_check == -1) {
-            stop_server();  // Dacă utilizatorul scrie "stop", oprește serverul
-            break;  // Oprim execuția programului
+            stop_server();  
+            break;  
         }
         
     }

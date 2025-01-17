@@ -8,55 +8,217 @@
 #include <sys/time.h>
 #include <signal.h>
 #include <stdbool.h>
+#include<stdbool.h>
+
+#define PORT_FILE "port_config.txt"
+#define PASSWORD_STATUS_FILE "password_status.txt"
+volatile bool is_password_enabled = true; 
+volatile int max_clients = 10;  
 
 
 int server_fd=-1;
 volatile int stop_server_flag = 0;
-pthread_t accept_thread; //thread pentru acceptarea conexiunilor pentru a separa thread ul principal de acceptarea noilor conexiuni
+pthread_t accept_thread; 
 
 
-bool check_password(){
+void load_password_status() {
+    FILE *file = fopen(PASSWORD_STATUS_FILE, "r");
+    if (!file) {
+        printf("Password status file not found. Defaulting to enabled.\n");
+        is_password_enabled = true;  
+        return;
+    }
+
+    char status[16];
+    if (fgets(status, sizeof(status), file)) {
+        if (strncmp(status, "enabled", 7) == 0) {
+            is_password_enabled = true;
+        } else if (strncmp(status, "disabled", 8) == 0) {
+            is_password_enabled = false;
+        } else {
+            printf("Invalid password status in file. Defaulting to enabled.\n");
+            is_password_enabled = true;
+        }
+    } else {
+        printf("Password status file is empty. Defaulting to enabled.\n");
+        is_password_enabled = true;
+    }
+
+    fclose(file);
+}
+
+void save_password_status() {
+    FILE *file = fopen(PASSWORD_STATUS_FILE, "w");
+    if (!file) {
+        perror("Failed to open password status file for writing");
+        return;
+    }
+
+    fprintf(file, "%s\n", is_password_enabled ? "enabled" : "disabled");
+    fclose(file);
+}
+
+void toggle_password() {
+    is_password_enabled = !is_password_enabled;
+    save_password_status();
+
+    if (is_password_enabled) {
+        printf("Password protection enabled.\n");
+    } else {
+        printf("Password protection disabled.\n");
+    }
+}
+
+int read_port_from_file() {
+    FILE *file = fopen(PORT_FILE, "r");
+    if (file == NULL) {
+        perror("Failed to open port file. Using default port.");
+        stop_server();
+        return 8080;
+    }
+    int port;
+    if (fscanf(file, "%d", &port) != 1) {
+        perror("Failed to read port from file. Using default port.");
+        stop_server();
+    }
+    fclose(file);
+    return port;
+}
+
+void write_port_to_file(int port) {
+    FILE *file = fopen(PORT_FILE, "w");
+    if (file == NULL) {
+        perror("Failed to open port file for writing.");
+        return;
+    }
+    fprintf(file, "%d\n", port);
+    fclose(file);
+    printf("Port saved to file: %d\n", port);
+}
+
+bool check_password() {
+    if (!is_password_enabled) {
+        return true;  
+    }
+
     char input[256];
     printf("Enter administrator password: ");
-    fgets(input,sizeof(input),stdin);
-    input[strcspn(input,"\n")]=0; //sterge caracterul newline
-    if(strcmp(input,ADMIN_PASSWORD)==0){
+    fgets(input, sizeof(input), stdin);
+    input[strcspn(input, "\n")] = 0;  
+    if (strcmp(input, ADMIN_PASSWORD) == 0) {
         return true;
-    }else{
-        printf("Incorrect passwd!\n");
+    } else {
+        printf("Incorrect password!\n");
         return false;
     }
 }
 
+void restart_server_on_new_port(int new_port) {
+    printf("Reconfiguring server to use port %d...\n", new_port);
+
+    close(server_fd);
+
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("Failed to create new socket");
+        exit(EXIT_FAILURE); 
+    }
+
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(new_port),
+        .sin_addr.s_addr = INADDR_ANY
+    };
+
+    if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("Failed to bind to new port");
+        exit(EXIT_FAILURE);
+    }
+    if (listen(server_fd, 10) < 0) {
+        perror("Failed to listen on new port");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Server reconfigured and now listening on http://localhost:%d\n", new_port);
+}
+
+void configure_server() {
+    if (is_password_enabled && !check_password()) {
+        return;  
+    }
+
+    int choice = 0;
+    do {
+        printf("\n=== Server Configuration Menu ===\n");
+        printf("1. Change listening port\n");
+        printf("2. %s password protection\n", is_password_enabled ? "Disable" : "Enable");
+        printf("3. Exit configuration\n");
+        printf("Enter your choice: ");
+
+        if (scanf("%d", &choice) != 1) {
+            printf("Invalid input. Please enter a number between 1 and 3.\n");
+            while (getchar() != '\n'); 
+            continue;
+        }
+
+        switch (choice) {
+            case 1: {
+                int new_port;
+                printf("Enter new port number: ");
+                if (scanf("%d", &new_port) != 1 || new_port < 1 || new_port > 65535) {
+                    printf("Invalid port number. Please enter a value between 1 and 65535.\n");
+                    while (getchar() != '\n');  
+                    continue;
+                }
+                write_port_to_file(new_port);
+                printf("Port changed to %d.\n", new_port);
+                restart_server_on_new_port(new_port);  
+                break;
+            }
+            case 2:
+                toggle_password(); 
+                break;
+            case 3:
+                printf("Exiting configuration menu.\n");
+                break;
+            default:
+                printf("Invalid choice. Please try again.\n");
+                break;
+        }
+    } while (choice != 3);
+}
+
+
 void* accept_connections(void* arg) {
     int client_sock = 0;
 
-    while (!stop_server_flag) {  // Așteptăm oprirea serverului
+    while (!stop_server_flag) {  
        printf("Waiting for a client connection...\n");
         client_sock = accept(server_fd, 0, 0);
         
         if (client_sock < 0) {
-            if (stop_server_flag) break;  // Dacă serverul este oprit, ieșim
+            if (stop_server_flag) break;  
             perror("Accept failed");
             continue;
         }
+
         printf("Client connected!\n");
-        // Dacă acceptarea conexiunii a avut succes, procesăm clientul pe un thread
-        pthread_mutex_lock(&(server_threadpool->mutex_locker));  // Blocăm mutex-ul pentru a proteja zona critică
-        // Procesăm clientul fără a folosi coada
+        pthread_mutex_lock(&(server_threadpool->mutex_locker));  
         pthread_t client_thread;
+
         if (pthread_create(&client_thread, NULL, handle_client, (void*)&client_sock) != 0) {
             perror("Failed to create client handler thread");
             close(client_sock);
         } else {
-            pthread_detach(client_thread);  // Detachăm thread-ul pentru a nu fi nevoie să-l așteptăm
+            pthread_detach(client_thread);  
         }
-        pthread_mutex_unlock(&(server_threadpool->mutex_locker));  // Eliberăm mutex-ul
+        pthread_mutex_unlock(&(server_threadpool->mutex_locker)); 
     }
 
     printf("Accept connections stopped\n");
     return NULL;
 }
+
 int start_server() {
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("Deschidere server\n");
@@ -70,16 +232,15 @@ int start_server() {
     server_threadpool->is_running = true;
     printf("Server initializat cu succes\n");
 
-    // Creare socket
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("Socket creation failed");
         return -1;
     }
-
+    int port=read_port_from_file();
     struct sockaddr_in addr = {
         .sin_family = AF_INET,
-        .sin_port = htons(PORT),
+        .sin_port = htons(port),
         .sin_addr.s_addr = INADDR_ANY
     };
 
@@ -96,9 +257,8 @@ int start_server() {
         return -1;
     }
 
-    printf("Server running on http://localhost:%d\n", PORT);
+    printf("Server running on http://localhost:%d\n", port);
 
-    // Creare thread pentru a monitoriza input-ul
     pthread_t input_thread;
     if (pthread_create(&input_thread, NULL, monitor_input, NULL) != 0) {
         perror("Failed to create input thread");
@@ -108,7 +268,6 @@ int start_server() {
         printf("Input monitoring thread created successfully\n");
     }
 
-    // Creare thread pentru a accepta conexiunile
     pthread_t accept_thread;
     if (pthread_create(&accept_thread, NULL, accept_connections, NULL) != 0) {
         perror("Failed to create accept thread");
@@ -116,25 +275,20 @@ int start_server() {
         return -1;
     }
 
-    // Așteptăm terminarea thread-ului acceptor
     pthread_join(accept_thread, NULL);
     return 0;
 }
 
 void stop_server() {
+    
     printf("Shutting down server...\n");
-
-    // Setează flag-ul pentru oprirea serverului
     stop_server_flag = 1;
     printf("stop_server_flag set to 1\n");
-    // Așteptăm ca thread-ul care acceptă conexiuni să termine
     if (server_threadpool != NULL) {
     printf("Waiting for server thread to finish...\n");
     pthread_join(server_threadpool->thread, NULL);
     printf("Server thread finished.\n");
     }
-
-    // Închidem socketul serverului
     close(server_fd);
     printf("Server stopped\n");
     kill(getpid(),SIGTERM);
@@ -142,7 +296,7 @@ void stop_server() {
 
 void handle_sigterm(int sig) {
     printf("Received SIGTERM. Stopping server...\n");
-    stop_server();  // Apelează funcția care oprește serverul
+    stop_server();  
 }
 
 void* monitor_input(void* arg) {
@@ -151,13 +305,12 @@ void* monitor_input(void* arg) {
     setvbuf(stdout, NULL, _IONBF, 0);
 
     while (!stop_server_flag) {
-        FD_ZERO(&readfds);  // Resetează setul de fișiere citibile
-        FD_SET(STDIN_FILENO, &readfds);  // Adaugă stdin la setul de fișiere citibile
+        FD_ZERO(&readfds);  
+        FD_SET(STDIN_FILENO, &readfds);  
 
-        timeout.tv_sec = 1;  // Timeout de 1 secundă
+        timeout.tv_sec = 1; 
         timeout.tv_usec = 0;
 
-        // Verificăm dacă stdin are date de citit
         int activity = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
 
         if (activity < 0) {
@@ -167,20 +320,21 @@ void* monitor_input(void* arg) {
 
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             char input[256];
-            printf("Enter 'stop' to shut down the server: ");
-            fflush(stdout);  // Asigură-te că promptul este afișat imediat
+            fflush(stdout);  
 
             if (fgets(input, sizeof(input), stdin) != NULL) {
-                input[strcspn(input, "\n")] = 0;  // Elimină caracterul de newline
+                input[strcspn(input, "\n")] = 0;  
 
                 if (strcmp(input, "stop") == 0) {
                     printf("Închidere server...\n");
-                    stop_server();  // Oprește serverul
+                    stop_server();  
+                } else if (strcmp(input, "configurare") == 0) {
+                    configure_server();
                 }
             }
         }
-        // Delay pentru a reduce utilizarea CPU
-        usleep(500000);  // Pauză de 0.5 secunde
+        
+        usleep(500000);  
     }
 
     return NULL;
